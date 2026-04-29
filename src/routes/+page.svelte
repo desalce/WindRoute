@@ -1,6 +1,7 @@
 <script>
 	import WindIndicator from '$lib/components/WindIndicator.svelte';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
+	import MapView from '$lib/components/MapView.svelte';
 
 	// --- Formular-State ---
 	let startLabel = $state('');
@@ -206,10 +207,11 @@ ${trkpts}
 				<span>150 km</span>
 			</div>
 
-			<label class="field-label">
+			<fieldset class="sport-fieldset">
+			<legend class="field-label">
 				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
 				Sportart
-			</label>
+			</legend>
 			<div class="sport-toggle">
 				<button
 					type="button"
@@ -222,6 +224,7 @@ ${trkpts}
 					onclick={() => (sport = 'gravel')}
 				>Gravel</button>
 			</div>
+			</fieldset>
 
 			{#if errorMsg}
 				<p class="error-msg">{errorMsg}</p>
@@ -344,12 +347,7 @@ ${trkpts}
 					<p>Gib einen Startpunkt ein und klicke auf <strong>Routen generieren</strong></p>
 				</div>
 			{:else}
-				<div class="map-todo">
-					<p>🗺 Karte (Leaflet) — wird in Schritt 8 implementiert</p>
-					{#if activeRoute}
-						<p style="font-size:0.8rem;opacity:0.7">{activeRoute.geometry.coordinates.length} Koordinatenpunkte geladen</p>
-					{/if}
-				</div>
+				<MapView route={activeRoute} wind={result.wind} />
 			{/if}
 		</div>
 	</main>
@@ -471,6 +469,12 @@ ${trkpts}
 	}
 
 	/* Sport-Toggle */
+	.sport-fieldset {
+		border: none;
+		padding: 0;
+		margin: 0;
+	}
+
 	.sport-toggle {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
@@ -727,8 +731,7 @@ ${trkpts}
 		background: #dde8f0;
 	}
 
-	.map-empty,
-	.map-todo {
+	.map-empty {
 		text-align: center;
 		color: #475569;
 		font-size: 0.95rem;

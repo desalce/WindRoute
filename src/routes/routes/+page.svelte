@@ -5,7 +5,7 @@
 		return dirs[Math.round(deg / 45) % 8];
 	}
 
-	/** @param {string} iso */
+	/** @param {string | Date} iso */
 	function formatDate(iso) {
 		return new Date(iso).toLocaleDateString('de-CH', {
 			day: '2-digit',
