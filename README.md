@@ -121,7 +121,90 @@ Eine Web-App (**WindRoute**), die dem/der Sportler:in zu Beginn eines Trainingst
 _[folgt]_
 
 #### 3.4.2. Umsetzung (Technik)
-_[folgt ab Woche 11]_
+
+**Deployment:** [https://windroute.netlify.app](https://windroute.netlify.app)
+
+**Tech-Stack**
+
+| Schicht | Technologie | Begründung |
+|---|---|---|
+| Framework | SvelteKit 2 (Svelte 5 Runes) | SSR + Client-Routing in einem; Svelte 5 Runes für reaktiven State |
+| Sprache | JavaScript mit JSDoc-Types | Typeprüfung ohne TS-Compiler-Overhead |
+| Datenbank | MongoDB Atlas (Free Tier) | Flexibles Schema für GeoJSON-Geometrien; Atlas ohne eigenen Server |
+| Karte | Leaflet 1.9 | Open-Source, leichtgewichtig, gut integrierbar |
+| Deployment | Netlify (adapter-netlify) | Serverless Functions für SvelteKit-Server-Routes |
+| Wind-API | Open-Meteo | Kostenlos, kein API-Key, stündliche Winddaten |
+| Routing-API | GraphHopper Directions API | `round_trip` + `heading`-Parameter = Kerntechnik der App |
+| Geocoding | Photon (Komoot) | Open-Source, kein API-Key, deutschsprachige Ergebnisse |
+
+**Architektur**
+
+```mermaid
+graph LR
+    Browser -->|GET /| SvelteKit
+    Browser -->|GET /routes| SvelteKit
+    Browser -->|GET /api/wind| WindService
+    Browser -->|POST /api/generate| RoutingService
+    Browser -->|POST /api/routes| MongoDB
+    WindService -->|fetch| OpenMeteo
+    RoutingService -->|fetch| GraphHopper
+    MongoDB -->|Atlas| Cloud[(MongoDB Atlas)]
+```
+
+**Hauptworkflow**
+
+1. Nutzer:in gibt Startpunkt ein → Photon-Geocoding liefert `lat/lng`
+2. Klick auf "Routen generieren" → `/api/wind` holt aktuellen Wind (Open-Meteo)
+3. `/api/generate` ruft GraphHopper zweimal mit `algorithm=round_trip`, `heading=windDirectionDeg` und `seed=0/1` auf
+4. Für jedes Segment der Route wird Fahrrichtung vs. Windrichtung verglichen → Rückenwind-Prozent
+5. Routen werden auto-saved in MongoDB → erscheinen in `/routes`-Archiv
+6. Leaflet-Karte zeigt Route segmentiert: rot (Gegenwind) / grün (Rückenwind)
+
+**Projektstruktur**
+
+```
+src/
+├── lib/
+│   ├── components/          # Svelte-Komponenten
+│   │   ├── NavBar.svelte
+│   │   ├── MapView.svelte   # Leaflet, SSR-sicher via dynamischem Import
+│   │   ├── WindIndicator.svelte
+│   │   └── LoadingSpinner.svelte
+│   ├── models/
+│   │   └── route.js         # JSDoc-Typdefinitionen
+│   └── server/
+│       ├── db/client.js     # MongoDB-Singleton (serverless-kompatibel)
+│       └── services/
+│           ├── wind.js      # Open-Meteo-Integration
+│           └── routing.js   # GraphHopper-Integration + Rückenwind-Berechnung
+└── routes/
+    ├── +page.svelte         # Hauptseite: Formular + Karte
+    ├── routes/+page.svelte  # Archiv aller gespeicherten Routen
+    └── api/
+        ├── wind/            # GET ?lat=&lng=
+        ├── generate/        # POST → zwei Routen via GraphHopper
+        └── routes/          # GET (alle), POST (speichern), DELETE
+```
+
+**Setup lokal**
+
+```bash
+git clone https://github.com/lorenzosalce/WindRoute.git
+cd WindRoute
+npm install
+cp .env.example .env
+# .env befüllen: MONGODB_URI und GRAPHHOPPER_API_KEY
+npm run dev
+```
+
+**Externe APIs & Limits**
+
+| API | Limit (Free) | Key nötig? |
+|---|---|---|
+| Open-Meteo | 10 000 Req/Tag | Nein |
+| GraphHopper | 500 Req/Tag | Ja (graphhopper.com) |
+| Photon (Komoot) | Keine offizielle Limite | Nein |
+| MongoDB Atlas M0 | 512 MB Speicher | Nein (Connection String) |
 
 ### 3.5 Validate
 _[folgt in Woche 14]_
