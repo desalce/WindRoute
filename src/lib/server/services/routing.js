@@ -22,7 +22,7 @@ const GH_BASE = 'https://graphhopper.com/api/1/route';
  * }>}
  */
 export async function generateRoundTrip({ lat, lng, distanceKm, sport, windHeadingDeg, seed = 0 }) {
-	const vehicle = sport === 'road' ? 'racingbike' : 'bike';
+	const vehicle = 'bike'; // Free Tier unterstützt nur car, bike, foot
 
 	const params = new URLSearchParams({
 		key: GRAPHHOPPER_API_KEY,
