@@ -66,7 +66,7 @@
 		try {
 			// Wind holen
 			const windRes = await fetch(`/api/wind?lat=${startLat}&lng=${startLng}`);
-			if (!windRes.ok) throw new Error('Winddaten konnten nicht geladen werden.');
+			if (!windRes.ok) throw new Error('Winddaten konnten nicht geladen werden. Bitte versuche es erneut.');
 			const wind = await windRes.json();
 
 			// Routen generieren
@@ -77,7 +77,14 @@
 			});
 			if (!genRes.ok) {
 				const err = await genRes.json().catch(() => ({}));
-				throw new Error(err.message || 'Routen konnten nicht generiert werden.');
+				const raw = err.message ?? '';
+				// GraphHopper-Fehlermeldungen verständlich übersetzen
+				const msg = raw.includes('Cannot find point')
+					? 'Kein fahrbarer Weg ab diesem Startpunkt gefunden. Versuche einen anderen Ort.'
+					: raw.includes('Connection point') || raw.includes('Cannot find')
+						? 'Der Startpunkt liegt ausserhalb des Strassennetzes (z.B. im Wasser).'
+						: raw || 'Routen konnten nicht generiert werden.';
+				throw new Error(msg);
 			}
 			const generated = await genRes.json();
 
@@ -726,12 +733,17 @@ ${trkpts}
 	.map-placeholder {
 		flex: 1;
 		display: flex;
-		align-items: center;
-		justify-content: center;
 		background: #dde8f0;
+		overflow: hidden;
+	}
+
+	/* Stretch MapView to fill the entire area */
+	.map-placeholder > :global(.map-container) {
+		flex: 1;
 	}
 
 	.map-empty {
+		margin: auto;
 		text-align: center;
 		color: #475569;
 		font-size: 0.95rem;
