@@ -50,6 +50,8 @@
 	// --- Generierungslogik ---
 	let loading = $state(false);
 	let errorMsg = $state(/** @type {string | null} */ (null));
+	// Index der Route die gerade gespeichert wird (null = keine)
+	let savingIdx = $state(/** @type {number | null} */ (null));
 
 	/** @type {{ wind: import('$lib/models/route.js').WindSnapshot, routes: import('$lib/models/route.js').Route[] } | null} */
 	let result = $state(null);
@@ -62,6 +64,7 @@
 		errorMsg = null;
 		loading = true;
 		result = null;
+		savingIdx = null;
 
 		try {
 			// Wind holen
@@ -100,31 +103,32 @@
 			);
 			result = { wind, routes: routesForDisplay };
 			activeRoute = routesForDisplay[0];
-
-			// Auto-Save im Hintergrund (aktualisiert _id für Delete-Button)
-			Promise.all(
-				routesForDisplay.map(
-					/** @param {any} r */
-					(r) =>
-						fetch('/api/routes', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify(r)
-						})
-						.then((res) => res.ok ? res.json() : null)
-						.catch(() => null)
-				)
-			).then((saved) => {
-				const valid = saved.filter(Boolean);
-				if (valid.length > 0 && result) {
-					result.routes = valid;
-					activeRoute = valid[0];
-				}
-			});
 		} catch (/** @type {any} */ err) {
 			errorMsg = err.message ?? 'Unbekannter Fehler.';
 		} finally {
 			loading = false;
+		}
+	}
+
+	/** Route in die Bibliothek speichern und _id zurückschreiben */
+	/** @param {any} route @param {number} idx */
+	async function saveRoute(route, idx) {
+		if (savingIdx !== null) return;
+		savingIdx = idx;
+		try {
+			const res = await fetch('/api/routes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(route)
+			});
+			if (res.ok && result) {
+				const saved = await res.json();
+				// _id ins lokale Route-Objekt schreiben damit der Löschen-Button erscheint
+				result.routes[idx] = { ...route, _id: saved._id };
+				if (activeRoute === route) activeRoute = result.routes[idx];
+			}
+		} finally {
+			savingIdx = null;
 		}
 	}
 
@@ -266,7 +270,7 @@ ${trkpts}
 				{#each result.routes as route, i}
 					<div
 						class="route-card"
-						class:selected={activeRoute?._id === route._id}
+						class:selected={activeRoute === route}
 						role="button"
 						tabindex="0"
 						onclick={() => (activeRoute = route)}
@@ -324,11 +328,22 @@ ${trkpts}
 
 						<div class="card-actions">
 							<button class="btn-gpx" onclick={(e) => { e.stopPropagation(); exportGpx(route); }}>
-								↓ Als GPX exportieren
+								↓ GPX
 							</button>
-							<button class="btn-delete" title="Route löschen" onclick={(e) => { e.stopPropagation(); deleteRoute(String(route._id)); }}>
-								🗑
-							</button>
+							{#if route._id}
+								<span class="saved-indicator">✓ Gespeichert</span>
+								<button class="btn-delete" title="Route löschen" onclick={(e) => { e.stopPropagation(); deleteRoute(String(route._id)); }}>
+									🗑
+								</button>
+							{:else}
+								<button
+									class="btn-save"
+									disabled={savingIdx === i}
+									onclick={(e) => { e.stopPropagation(); saveRoute(route, i); }}
+								>
+									{savingIdx === i ? '…' : '+ Speichern'}
+								</button>
+							{/if}
 						</div>
 					</div>
 				{/each}
@@ -568,6 +583,39 @@ ${trkpts}
 		color: #475569;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
+	}
+
+	.saved-indicator {
+		flex: 1;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #166534;
+		background: #dcfce7;
+		padding: 0.5rem 0.6rem;
+		border-radius: 6px;
+		text-align: center;
+	}
+
+	.btn-save {
+		flex: 1;
+		padding: 0.5rem;
+		background: #16a34a;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.btn-save:hover:not(:disabled) {
+		background: #15803d;
+	}
+
+	.btn-save:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	.route-card {

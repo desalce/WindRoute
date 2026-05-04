@@ -10,5 +10,5 @@ export async function getDb() {
 		client = new MongoClient(MONGODB_URI);
 		await client.connect();
 	}
-	return client.db('windroute');
+	return client.db('WindRoute');
 }

@@ -9,7 +9,6 @@ const GH_BASE = 'https://graphhopper.com/api/1/route';
  *   lat: number,
  *   lng: number,
  *   distanceKm: number,
- *   sport: 'road' | 'gravel',
  *   windHeadingDeg: number,
  *   seed?: number
  * }} opts
@@ -21,20 +20,39 @@ const GH_BASE = 'https://graphhopper.com/api/1/route';
  *   tailwindPercent: number
  * }>}
  */
-export async function generateRoundTrip({ lat, lng, distanceKm, sport, windHeadingDeg, seed = 0 }) {
-	const vehicle = 'bike'; // Free Tier unterstützt nur car, bike, foot
+export async function generateRoundTrip({ lat, lng, distanceKm, windHeadingDeg, seed = 0 }) {
+	const vehicle = 'bike'; // Free Tier: nur car, bike, foot
 
+	// Dreieck-Schleife: Start → WP1 (in Windrichtung) → WP2 (abbiegen) → Start
+	// Route 1 (seed=0): Abbiegen nach rechts (+120°) → Uhrzeigersinn
+	// Route 2 (seed=1): Abbiegen nach links  (-120°) → Gegenuhrzeigersinn
+	// Beide Routen starten mit Gegenwind-Etappe, erkunden aber verschiedene Gebiete.
+
+	const legDistKm = distanceKm / 3;
+	const legDistDeg = legDistKm / 111; // 1° Breitengrad ≈ 111 km
+
+	// WP1: Etappe 1 – gerade in den Wind
+	const heading1Rad = (windHeadingDeg * Math.PI) / 180;
+	const wp1Lat = lat + legDistDeg * Math.cos(heading1Rad);
+	const wp1Lng = lng + legDistDeg * Math.sin(heading1Rad) / Math.cos((lat * Math.PI) / 180);
+
+	// WP2: Etappe 2 – 120° abbiegen (Richtung je nach seed)
+	const turn = seed === 0 ? 120 : -120;
+	const heading2Rad = (((windHeadingDeg + turn) % 360 + 360) % 360 * Math.PI) / 180;
+	const wp2Lat = wp1Lat + legDistDeg * Math.cos(heading2Rad);
+	const wp2Lng = wp1Lng + legDistDeg * Math.sin(heading2Rad) / Math.cos((wp1Lat * Math.PI) / 180);
+
+	// Vier Punkte: Start → WP1 → WP2 → Start
 	const params = new URLSearchParams({
 		key: GRAPHHOPPER_API_KEY,
-		'point': `${lat},${lng}`,
-		algorithm: 'round_trip',
-		'point.round_trip.distance': String(distanceKm * 1000),
-		'point.round_trip.heading': String(windHeadingDeg),
-		'point.round_trip.seed': String(seed),
 		vehicle,
 		locale: 'de',
 		points_encoded: 'false'
 	});
+	params.append('point', `${lat},${lng}`);
+	params.append('point', `${wp1Lat.toFixed(6)},${wp1Lng.toFixed(6)}`);
+	params.append('point', `${wp2Lat.toFixed(6)},${wp2Lng.toFixed(6)}`);
+	params.append('point', `${lat},${lng}`);
 
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15000);
