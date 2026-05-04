@@ -88,30 +88,39 @@
 			}
 			const generated = await genRes.json();
 
-			// Routen speichern (auto-save)
-			const saved = await Promise.all(
-				generated.routes.map(
-					/** @param {any} r @param {number} i */
-					(r, i) =>
+			// Routen sofort anzeigen (ohne auf DB-Save zu warten)
+			/** @type {any[]} */
+			const routesForDisplay = generated.routes.map(
+				/** @param {any} r @param {number} i */
+				(r, i) => ({
+					name: i === 0 ? 'Klassische Runde' : 'Panorama-Tour',
+					startLat, startLng, startLabel, distanceKm, sport, wind,
+					...r
+				})
+			);
+			result = { wind, routes: routesForDisplay };
+			activeRoute = routesForDisplay[0];
+
+			// Auto-Save im Hintergrund (aktualisiert _id für Delete-Button)
+			Promise.all(
+				routesForDisplay.map(
+					/** @param {any} r */
+					(r) =>
 						fetch('/api/routes', {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({
-								name: i === 0 ? 'Klassische Runde' : 'Panorama-Tour',
-								startLat,
-								startLng,
-								startLabel,
-								distanceKm,
-								sport,
-								wind,
-								...r
-							})
-						}).then((res) => res.json())
+							body: JSON.stringify(r)
+						})
+						.then((res) => res.ok ? res.json() : null)
+						.catch(() => null)
 				)
-			);
-
-			result = { wind, routes: saved };
-			activeRoute = saved[0];
+			).then((saved) => {
+				const valid = saved.filter(Boolean);
+				if (valid.length > 0 && result) {
+					result.routes = valid;
+					activeRoute = valid[0];
+				}
+			});
 		} catch (/** @type {any} */ err) {
 			errorMsg = err.message ?? 'Unbekannter Fehler.';
 		} finally {

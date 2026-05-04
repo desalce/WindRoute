@@ -85,7 +85,6 @@
 	onMount(async () => {
 		if (!browser || !mapEl) return;
 		L = (await import('leaflet')).default;
-		await import('leaflet/dist/leaflet.css');
 
 		map = L.map(mapEl, { zoomControl: true });
 		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
