@@ -3,13 +3,15 @@ import { GRAPHHOPPER_API_KEY } from '$env/static/private';
 const GH_BASE = 'https://graphhopper.com/api/1/route';
 
 /**
- * Berechnet eine Rund-Route via GraphHopper `round_trip`.
+ * Berechnet eine Rund-Route via GraphHopper und passt die Distanz iterativ an,
+ * bis das Ergebnis innerhalb von ±5 km des Ziels liegt (max. 3 Versuche).
  *
  * @param {{
  *   lat: number,
  *   lng: number,
  *   distanceKm: number,
  *   windHeadingDeg: number,
+ *   sport?: string,
  *   seed?: number
  * }} opts
  * @returns {Promise<{
@@ -21,28 +23,55 @@ const GH_BASE = 'https://graphhopper.com/api/1/route';
  * }>}
  */
 export async function generateRoundTrip({ lat, lng, distanceKm, windHeadingDeg, seed = 0 }) {
+	const TOLERANCE_KM = 5;
+	const MAX_ATTEMPTS = 3;
+
+	// requestedKm wird nach jedem Versuch skaliert, damit das geroutete Ergebnis
+	// näher am Zielwert liegt (Strassen sind länger als Luftlinie)
+	let requestedKm = distanceKm;
+	let lastResult = null;
+
+	for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+		const result = await callGraphHopper({ lat, lng, distanceKm: requestedKm, windHeadingDeg, seed });
+		lastResult = result;
+
+		if (Math.abs(result.actualDistanceKm - distanceKm) <= TOLERANCE_KM) break;
+
+		requestedKm = requestedKm * (distanceKm / result.actualDistanceKm);
+	}
+
+	return /** @type {NonNullable<typeof lastResult>} */ (lastResult);
+}
+
+/**
+ * Einzelner GraphHopper-Aufruf mit Dreieck-Wegpunkten.
+ *
+ * @param {{
+ *   lat: number,
+ *   lng: number,
+ *   distanceKm: number,
+ *   windHeadingDeg: number,
+ *   seed: number
+ * }} opts
+ */
+async function callGraphHopper({ lat, lng, distanceKm, windHeadingDeg, seed }) {
 	const vehicle = 'bike'; // Free Tier: nur car, bike, foot
 
 	// Dreieck-Schleife: Start → WP1 (in Windrichtung) → WP2 (abbiegen) → Start
 	// Route 1 (seed=0): Abbiegen nach rechts (+120°) → Uhrzeigersinn
 	// Route 2 (seed=1): Abbiegen nach links  (-120°) → Gegenuhrzeigersinn
-	// Beide Routen starten mit Gegenwind-Etappe, erkunden aber verschiedene Gebiete.
-
 	const legDistKm = distanceKm / 3;
-	const legDistDeg = legDistKm / 111; // 1° Breitengrad ≈ 111 km
+	const legDistDeg = legDistKm / 111;
 
-	// WP1: Etappe 1 – gerade in den Wind
 	const heading1Rad = (windHeadingDeg * Math.PI) / 180;
 	const wp1Lat = lat + legDistDeg * Math.cos(heading1Rad);
-	const wp1Lng = lng + legDistDeg * Math.sin(heading1Rad) / Math.cos((lat * Math.PI) / 180);
+	const wp1Lng = lng + (legDistDeg * Math.sin(heading1Rad)) / Math.cos((lat * Math.PI) / 180);
 
-	// WP2: Etappe 2 – 120° abbiegen (Richtung je nach seed)
 	const turn = seed === 0 ? 120 : -120;
-	const heading2Rad = (((windHeadingDeg + turn) % 360 + 360) % 360 * Math.PI) / 180;
+	const heading2Rad = ((((windHeadingDeg + turn) % 360) + 360) % 360 * Math.PI) / 180;
 	const wp2Lat = wp1Lat + legDistDeg * Math.cos(heading2Rad);
-	const wp2Lng = wp1Lng + legDistDeg * Math.sin(heading2Rad) / Math.cos((wp1Lat * Math.PI) / 180);
+	const wp2Lng = wp1Lng + (legDistDeg * Math.sin(heading2Rad)) / Math.cos((wp1Lat * Math.PI) / 180);
 
-	// Vier Punkte: Start → WP1 → WP2 → Start
 	const params = new URLSearchParams({
 		key: GRAPHHOPPER_API_KEY,
 		vehicle,
@@ -79,7 +108,7 @@ export async function generateRoundTrip({ lat, lng, distanceKm, windHeadingDeg, 
 	const tailwindPercent = calcTailwindPercent(coords, windHeadingDeg);
 
 	return {
-		geometry: { type: 'LineString', coordinates: coords },
+		geometry: /** @type {import('$lib/models/route.js').GeoJsonLineString} */ ({ type: 'LineString', coordinates: coords }),
 		actualDistanceKm,
 		elevationGainM,
 		durationMin,
@@ -89,11 +118,8 @@ export async function generateRoundTrip({ lat, lng, distanceKm, windHeadingDeg, 
 
 /**
  * Berechnet den Rückenwind-Anteil einer Route geometrisch.
- * Für jedes Segment: Fahrtrichtung vs. Windrichtung vergleichen.
- * Segment gilt als Rückenwind wenn Winkel-Differenz < 90°.
- *
  * @param {[number, number][]} coords - [lng, lat][]
- * @param {number} windHeadingDeg - Windquelle-Richtung (= Gegenwindrichtung)
+ * @param {number} windHeadingDeg
  * @returns {number} Rückenwind-Anteil in Prozent (0–100)
  */
 function calcTailwindPercent(coords, windHeadingDeg) {
@@ -106,17 +132,13 @@ function calcTailwindPercent(coords, windHeadingDeg) {
 		const [lng1, lat1] = coords[i];
 		const [lng2, lat2] = coords[i + 1];
 
-		// Distanz des Segments (Pythagorean-Näherung — genug für Prozent-Schätzung)
 		const dx = (lng2 - lng1) * Math.cos((lat1 * Math.PI) / 180);
 		const dy = lat2 - lat1;
 		const segDist = Math.sqrt(dx * dx + dy * dy);
 
-		// Fahrtrichtung dieses Segments in Grad (0=N, 90=E, …)
 		const bearingRad = Math.atan2(dx, dy);
 		const bearingDeg = ((bearingRad * 180) / Math.PI + 360) % 360;
 
-		// Rückenwind wenn Fahrtrichtung mit Windrichtung übereinstimmt
-		// Wind kommt aus windHeadingDeg → Rückenwind wenn wir IN diese Richtung fahren
 		const angleDiff = Math.abs(((bearingDeg - windHeadingDeg + 540) % 360) - 180);
 
 		totalDist += segDist;

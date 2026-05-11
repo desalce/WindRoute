@@ -1,4 +1,6 @@
 <script>
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import WindIndicator from '$lib/components/WindIndicator.svelte';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import MapView from '$lib/components/MapView.svelte';
@@ -113,6 +115,11 @@
 	/** Route in die Bibliothek speichern und _id zurückschreiben */
 	/** @param {any} route @param {number} idx */
 	async function saveRoute(route, idx) {
+		// Nicht angemeldete User zum Login weiterleiten
+		if (!page.data.user) {
+			goto('/login');
+			return;
+		}
 		if (savingIdx !== null) return;
 		savingIdx = idx;
 		try {
@@ -121,6 +128,10 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(route)
 			});
+			if (res.status === 401) {
+				goto('/login');
+				return;
+			}
 			if (res.ok && result) {
 				const saved = await res.json();
 				// _id ins lokale Route-Objekt schreiben damit der Löschen-Button erscheint
@@ -401,6 +412,25 @@ ${trkpts}
 		gap: 1rem;
 		background: #f8fafc;
 		border-right: 1px solid #e2e8f0;
+	}
+
+	@media (max-width: 700px) {
+		.layout {
+			grid-template-columns: 1fr;
+			height: auto;
+			overflow: visible;
+		}
+
+		.sidebar {
+			overflow-y: visible;
+			border-right: none;
+			border-bottom: 1px solid #e2e8f0;
+		}
+
+		.map-area {
+			height: 55vh;
+			min-height: 320px;
+		}
 	}
 
 	.panel {

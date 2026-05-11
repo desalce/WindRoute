@@ -2,14 +2,14 @@
 	import NavBar from '$lib/components/NavBar.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 
-	let { children } = $props();
+	let { children, data } = $props();
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<NavBar />
+<NavBar user={data.user} />
 <div class="app-shell">
 	{@render children()}
 </div>
