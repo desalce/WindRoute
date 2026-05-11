@@ -131,6 +131,7 @@ _[folgt]_
 | Framework | SvelteKit 2 (Svelte 5 Runes) | SSR + Client-Routing in einem; Svelte 5 Runes für reaktiven State |
 | Sprache | JavaScript mit JSDoc-Types | Typeprüfung ohne TS-Compiler-Overhead |
 | Datenbank | MongoDB Atlas (Free Tier) | Flexibles Schema für GeoJSON-Geometrien; Atlas ohne eigenen Server |
+| Authentifizierung | Eigenbau (bcryptjs + `node:crypto`) | Session-basiert mit HTTP-only Cookie; kein externer Auth-Provider |
 | Karte | Leaflet 1.9 | Open-Source, leichtgewichtig, gut integrierbar |
 | Deployment | Netlify (adapter-netlify) | Serverless Functions für SvelteKit-Server-Routes |
 | Wind-API | Open-Meteo | Kostenlos, kein API-Key, stündliche Winddaten |
@@ -143,47 +144,83 @@ _[folgt]_
 graph LR
     Browser -->|GET /| SvelteKit
     Browser -->|GET /routes| SvelteKit
+    Browser -->|POST /login| AuthService
+    Browser -->|POST /register| AuthService
+    Browser -->|POST /logout| AuthService
     Browser -->|GET /api/wind| WindService
     Browser -->|POST /api/generate| RoutingService
     Browser -->|POST /api/routes| MongoDB
+    AuthService -->|bcryptjs| MongoDB
     WindService -->|fetch| OpenMeteo
     RoutingService -->|fetch| GraphHopper
     MongoDB -->|Atlas| Cloud[(MongoDB Atlas)]
 ```
 
+**Authentifizierungs-Datenmodell**
+
+```
+users       { _id, email, passwordHash, displayName?, createdAt }
+sessions    { _id (Token), userId, expiresAt }
+routes      { …, userId }   ← jede Route gehört einem User
+```
+
+Der Session-Token ist 32 zufällige Bytes (`node:crypto.randomBytes`), base64url-kodiert, und wird als HTTP-only / SameSite=Lax Cookie gesetzt. Bei jedem Request prüft `src/hooks.server.js` den Cookie und legt das User-Objekt in `event.locals.user` ab.
+
 **Hauptworkflow**
 
-1. Nutzer:in gibt Startpunkt ein → Photon-Geocoding liefert `lat/lng`
-2. Klick auf "Routen generieren" → `/api/wind` holt aktuellen Wind (Open-Meteo)
-3. `/api/generate` ruft GraphHopper zweimal mit `algorithm=round_trip`, `heading=windDirectionDeg` und `seed=0/1` auf
-4. Für jedes Segment der Route wird Fahrrichtung vs. Windrichtung verglichen → Rückenwind-Prozent
-5. Routen werden auto-saved in MongoDB → erscheinen in `/routes`-Archiv
-6. Leaflet-Karte zeigt Route segmentiert: rot (Gegenwind) / grün (Rückenwind)
+1. Nutzer:in registriert sich oder meldet sich an → Session-Cookie wird gesetzt (30 Tage gültig)
+2. Nutzer:in gibt Startpunkt ein → Photon-Geocoding liefert `lat/lng`
+3. Klick auf "Routen generieren" → `/api/wind` holt aktuellen Wind (Open-Meteo)
+4. `/api/generate` ruft GraphHopper mit `algorithm=round_trip`, `heading=windDirectionDeg` und `seed=0/1` auf. Die tatsächliche Route weicht oft von der gewünschten Distanz ab (Strassen sind länger als Luftlinie). Deshalb skaliert ein iterativer Algorithmus (max. 3 Versuche) die Wegpunkt-Abstände, bis das Ergebnis innerhalb von ±5 km liegt.
+5. Für jedes Segment der Route wird Fahrrichtung vs. Windrichtung verglichen → Rückenwind-Prozent
+6. Nutzer:in kann generierte Routen per Speichern-Button sichern (erfordert Login) → erscheinen in "Meine Routen" (`/routes`) mit Mini-Map-Vorschau und Sortierung; jede Route ist mit der `userId` verknüpft
+7. Leaflet-Karte zeigt Route segmentiert: rot (Gegenwind) / grün (Rückenwind)
 
 **Projektstruktur**
 
 ```
 src/
+├── hooks.server.js          # Session-Cookie bei jedem Request prüfen → locals.user
+├── app.d.ts                 # App.Locals-Typdefinition (user)
 ├── lib/
 │   ├── components/          # Svelte-Komponenten
-│   │   ├── NavBar.svelte
+│   │   ├── NavBar.svelte    # Zeigt Login/Register oder User + Logout
 │   │   ├── MapView.svelte   # Leaflet, SSR-sicher via dynamischem Import
+│   │   ├── MiniMap.svelte   # Kleine Vorschau-Karte in der Routen-Bibliothek
 │   │   ├── WindIndicator.svelte
 │   │   └── LoadingSpinner.svelte
 │   ├── models/
 │   │   └── route.js         # JSDoc-Typdefinitionen
 │   └── server/
 │       ├── db/client.js     # MongoDB-Singleton (serverless-kompatibel)
+│       ├── auth/
+│       │   ├── password.js  # hashPassword / verifyPassword (bcryptjs, 12 Runden)
+│       │   └── session.js   # createSession / validateSession / deleteSession + Cookie-Helpers
 │       └── services/
 │           ├── wind.js      # Open-Meteo-Integration
-│           └── routing.js   # GraphHopper-Integration + Rückenwind-Berechnung
+│           └── routing.js   # GraphHopper + iterative Distanzkorrektur + Rückenwind-Berechnung
 └── routes/
-    ├── +page.svelte         # Hauptseite: Formular + Karte
-    ├── routes/+page.svelte  # Archiv aller gespeicherten Routen
+    ├── +layout.svelte       # Globales Layout (NavBar etc.)
+    ├── +layout.server.js    # Gibt locals.user an alle Pages weiter
+    ├── +page.svelte         # Hauptseite: Formular + Karte (responsiv)
+    ├── login/
+    │   ├── +page.server.js  # Form-Action: E-Mail + Passwort prüfen, Session anlegen
+    │   └── +page.svelte     # Login-Formular
+    ├── register/
+    │   ├── +page.server.js  # Form-Action: Validierung, Hash, User + Session anlegen
+    │   └── +page.svelte     # Registrierungsformular
+    ├── logout/
+    │   └── +server.js       # POST: Session löschen, Cookie clearen, Redirect /
+    ├── routes/
+    │   ├── +page.server.js  # Auth-Guard + nur eigene Routen laden (userId-Filter)
+    │   └── +page.svelte     # "Meine Routen"-Bibliothek mit Mini-Maps & Sortierung
     └── api/
         ├── wind/            # GET ?lat=&lng=
         ├── generate/        # POST → zwei Routen via GraphHopper
-        └── routes/          # GET (alle), POST (speichern), DELETE
+        └── routes/
+            ├── +server.js   # GET / POST (Auth-Guard, userId-Filter)
+            └── [id]/
+                └── +server.js  # GET / DELETE (Auth-Guard + Owner-Check 403)
 ```
 
 **Setup lokal**
@@ -195,6 +232,17 @@ npm install
 cp .env.example .env
 # .env befüllen: MONGODB_URI und GRAPHHOPPER_API_KEY
 npm run dev
+```
+
+Beim ersten Start die App unter `http://localhost:5173/register` öffnen, ein Konto anlegen und anschliessend Routen generieren und speichern.
+
+**MongoDB-Indizes (einmalig in Mongo Shell / Compass anlegen)**
+
+```js
+// Abgelaufene Sessions automatisch löschen (TTL-Index)
+db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+// E-Mail-Eindeutigkeit sicherstellen
+db.users.createIndex({ email: 1 }, { unique: true })
 ```
 
 **Externe APIs & Limits**
