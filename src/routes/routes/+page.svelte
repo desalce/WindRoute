@@ -8,7 +8,8 @@
 
 	// Lokale Liste — wird bei Löschen aktualisiert ohne Seiten-Reload
 	/** @type {Route[]} */
-	let routes = $state(data.routes);
+	// svelte-ignore state_referenced_locally
+	let routes = $state(data.routes ?? []);
 
 	// Sortierung: 'date' = neueste zuerst (Standard), 'distance' = längste zuerst
 	/** @type {'date' | 'distance'} */

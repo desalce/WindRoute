@@ -394,8 +394,7 @@ ${trkpts}
 
 	<!-- Upgrade-Modal (erscheint bei HTTP 402) -->
 	{#if showUpgradeModal}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="upgrade-overlay" onclick={(e) => e.target === e.currentTarget && (showUpgradeModal = false)}>
+		<div class="upgrade-overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (showUpgradeModal = false)}>
 			<div class="upgrade-card" role="dialog" aria-modal="true" aria-label="Routen-Limit erreicht">
 				<h2>Routen-Limit erreicht</h2>
 				<p>Mit dem Free-Plan kannst du bis zu <strong>3 Routen</strong> speichern. Upgrade auf Pro für unbegrenzte Routen – jederzeit kündbar.</p>
