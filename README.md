@@ -350,15 +350,43 @@ _[folgt]_
 ## 6. KI-Deklaration
 
 ### 6.1 KI-Tools
-- **Eingesetzte Tools:** Claude (Anthropic) — für die Recherche zur Ausgangslage (existierende Apps, APIs, Fachquellen zu Headwind-Strategien).
-- **Zweck & Umfang:** Unterstützung bei der strukturierten Web-Recherche, Zusammenfassung von Quellen und Einordnung der Marktlücke. Die HMW-Fragen und die Problemraumanalyse stammen aus dem Unterricht und eigener Überlegung.
-- **Eigene Leistung (Abgrenzung):** Themenwahl, Problemraumanalyse, HMW-Fragen, Bewertung und Auswahl der Rechercheergebnisse, redaktionelle Überarbeitung.
+
+**Eingesetztes Tool:** Claude Code (claude-sonnet-4-6, Anthropic) — als interaktiver Coding-Assistent direkt in der Entwicklungsumgebung (VSCode-Extension).
+
+**Zweck & Umfang:**
+
+| Bereich | KI-Unterstützung | Eigenleistung |
+|---|---|---|
+| Recherche (3.1) | Strukturierte Web-Recherche, Zusammenfassung von Fachquellen, App-Vergleich | Themenwahl, Problemraumanalyse, HMW-Fragen, Bewertung der Ergebnisse |
+| Architektur & Technik | Beratung zu SvelteKit-Patterns, MongoDB-Schema, Stripe-Integration | Technologieentscheide, Anforderungen, Review jeder Änderung |
+| Implementierung | Code-Generierung für einzelne Komponenten und API-Routen auf Basis eigener Spezifikation | Spezifikation aller Features, Debugging, manuelle Tests, Deployment |
+| Dokumentation | Redaktionelle Unterstützung bei der README-Erstellung | Inhaltliche Vorgaben, Struktur, Überprüfung auf Korrektheit |
 
 ### 6.2 Prompt-Vorgehen
-_[folgt / wird laufend ergänzt]_
+
+Die KI wurde stets mit **konkreten Spezifikationen** angewiesen, nie mit offenen Delegationen. Typisches Muster:
+
+1. **Feature-Spezifikation als Prompt:** Anforderungen, Dateiname, gewünschtes Verhalten und technische Randbedingungen wurden explizit formuliert (z.B. welche SvelteKit-Runes zu verwenden sind, welches Datenbankschema gilt, welche API-Endpunkte existieren).
+2. **Review vor Übernahme:** Jeder generierte Code wurde durchgelesen und auf Korrektheit geprüft, bevor er im Projekt gespeichert wurde.
+3. **Iteratives Debugging:** Fehlermeldungen und unerwartetes Verhalten wurden als Folge-Prompts eingegeben; die Ursache wurde gemeinsam analysiert.
+
+Beispiel-Prompts (gekürzt):
+- *"Implementiere `RoutePreviewModal.svelte` als native `<dialog>` mit `showModal()`. Die Karte wird lazy mit Leaflet geladen. Zeige aktuellen Wind via `/api/wind`, vergleiche mit gespeichertem Wind und warne bei >45° Abweichung."*
+- *"Der Fehler ist `Invalid URL: explicit scheme required`. `APP_URL` ist `undefined`. Zeige mir, wo der Fehler liegt und wie er zu beheben ist."*
 
 ### 6.3 Reflexion
-_[folgt / wird laufend ergänzt]_
+
+Der Einsatz von Claude Code hat die Entwicklungsgeschwindigkeit erheblich erhöht, besonders bei repetitiven Mustern (API-Routen, Svelte-Komponenten, CSS-Layouts). Gleichzeitig zeigte sich, dass die KI ohne klare Spezifikation zu generischen oder nicht kontextgerechten Lösungen neigt.
+
+**Was gut funktioniert hat:**
+- Schnelle Umsetzung klar spezifizierter Komponenten (z.B. `RoutePreviewModal.svelte`)
+- Debugging mit konkreten Fehlermeldungen
+- Erklärung von Konzepten (z.B. warum `PUBLIC_*`-Env-Vars nicht im Server-Code verfügbar sind)
+
+**Was sorgfältige Eigenkontrolle erfordert hat:**
+- Sicherheitsrelevante Teile (Authentifizierung, Stripe-Webhook-Signaturprüfung) mussten besonders kritisch geprüft werden
+- Die KI kennt die eigene Codebase nicht von Anfang an — Kontext musste bei jeder Session explizit mitgegeben werden
+- Kleinere Svelte-5-Runes-spezifische Eigenheiten (z.B. `$state(null)` → TypeScript-`never`-Inferenz) wurden erst nach manuellem Testen entdeckt
 
 ## 7. Anhang [Optional]
 
