@@ -1,5 +1,6 @@
 <script>
 	import MiniMap from '$lib/components/MiniMap.svelte';
+	import RoutePreviewModal from '$lib/components/RoutePreviewModal.svelte';
 
 	/** @typedef {import('$lib/models/route.js').Route} Route */
 
@@ -25,6 +26,10 @@
 	/** @type {string | null} */
 	let deletingId = $state(null);
 
+	// Vorschau-Modal: welche Route gerade angezeigt wird
+	/** @type {Route | null} */
+	let previewRoute = $state(null);
+
 	/** Route aus DB und lokaler Liste entfernen */
 	/** @param {string} id */
 	async function deleteRoute(id) {
@@ -39,29 +44,14 @@
 		}
 	}
 
-	/** GPX-Datei für eine Route erzeugen und herunterladen */
-	/** @param {Route} route */
-	function exportGpx(route) {
-		const coords = route.geometry.coordinates;
-		const trkpts = coords
-			.map(([lng, lat]) => `    <trkpt lat="${lat}" lon="${lng}"></trkpt>`)
-			.join('\n');
-		const gpx = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="WindRoute">
-  <trk>
-    <name>${route.name}</name>
-    <trkseg>
-${trkpts}
-    </trkseg>
-  </trk>
-</gpx>`;
-		const blob = new Blob([gpx], { type: 'application/gpx+xml' });
-		const a = document.createElement('a');
-		a.href = URL.createObjectURL(blob);
-		a.download = `${route.name.replace(/\s+/g, '-').toLowerCase()}.gpx`;
-		a.click();
+	/** Löschen aus dem Vorschau-Modal heraus */
+	/** @param {string} id */
+	async function handleModalDelete(id) {
+		await deleteRoute(id);
+		previewRoute = null;
 	}
 
+	/** @param {number} deg */
 	/** Windrichtung als Himmelsrichtung */
 	/** @param {number} deg */
 	function windDirLabel(deg) {
@@ -176,11 +166,11 @@ ${trkpts}
 					<!-- Aktions-Buttons -->
 					<div class="card-actions">
 						<button
-							class="btn-gpx"
-							onclick={() => exportGpx(route)}
-							title="Als GPX herunterladen"
+							class="btn-preview"
+							onclick={() => (previewRoute = route)}
+							title="Vorschau öffnen"
 						>
-							↓ GPX
+							Vorschau
 						</button>
 						<button
 							class="btn-delete"
@@ -189,7 +179,7 @@ ${trkpts}
 							title="Route löschen"
 							aria-label="Route löschen"
 						>
-							{deletingId === String(route._id) ? '…' : '🗑'}
+							{deletingId === String(route._id) ? '…' : 'Löschen'}
 						</button>
 					</div>
 				</div>
@@ -197,6 +187,12 @@ ${trkpts}
 		</div>
 	{/if}
 </main>
+
+<RoutePreviewModal
+	route={previewRoute}
+	onclose={() => (previewRoute = null)}
+	ondelete={handleModalDelete}
+/>
 
 <style>
 	.archive {
@@ -452,7 +448,7 @@ ${trkpts}
 		gap: 0.5rem;
 	}
 
-	.btn-gpx {
+	.btn-preview {
 		flex: 1;
 		padding: 0.5rem;
 		background: #1e40af;
@@ -465,7 +461,7 @@ ${trkpts}
 		transition: background 0.15s;
 	}
 
-	.btn-gpx:hover {
+	.btn-preview:hover {
 		background: #1d3a9e;
 	}
 

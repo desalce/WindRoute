@@ -19,6 +19,7 @@
 
 		{#if user}
 			<a href="/routes" class:active={page.url.pathname === '/routes'}>Meine Routen</a>
+			<a href="/profile" class:active={page.url.pathname === '/profile'}>Profil</a>
 		{/if}
 	</div>
 

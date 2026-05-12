@@ -112,6 +112,10 @@
 		}
 	}
 
+	// Upgrade-Modal: erscheint wenn der Free-Plan voll ist (HTTP 402)
+	let showUpgradeModal = $state(false);
+	let upgradingToCheckout = $state(false);
+
 	/** Route in die Bibliothek speichern und _id zurückschreiben */
 	/** @param {any} route @param {number} idx */
 	async function saveRoute(route, idx) {
@@ -132,6 +136,10 @@
 				goto('/login');
 				return;
 			}
+			if (res.status === 402) {
+				showUpgradeModal = true;
+				return;
+			}
 			if (res.ok && result) {
 				const saved = await res.json();
 				// _id ins lokale Route-Objekt schreiben damit der Löschen-Button erscheint
@@ -140,6 +148,18 @@
 			}
 		} finally {
 			savingIdx = null;
+		}
+	}
+
+	/** Stripe Checkout starten */
+	async function startCheckout() {
+		upgradingToCheckout = true;
+		try {
+			const res = await fetch('/api/billing/checkout', { method: 'POST' });
+			const body = await res.json();
+			if (res.ok) window.location.href = body.url;
+		} finally {
+			upgradingToCheckout = false;
 		}
 	}
 
@@ -344,7 +364,7 @@ ${trkpts}
 							{#if route._id}
 								<span class="saved-indicator">✓ Gespeichert</span>
 								<button class="btn-delete" title="Route löschen" onclick={(e) => { e.stopPropagation(); deleteRoute(String(route._id)); }}>
-									🗑
+									Löschen
 								</button>
 							{:else}
 								<button
@@ -371,6 +391,33 @@ ${trkpts}
 			</p>
 		</div>
 	</aside>
+
+	<!-- Upgrade-Modal (erscheint bei HTTP 402) -->
+	{#if showUpgradeModal}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="upgrade-overlay" onclick={(e) => e.target === e.currentTarget && (showUpgradeModal = false)}>
+			<div class="upgrade-card" role="dialog" aria-modal="true" aria-label="Routen-Limit erreicht">
+				<h2>Routen-Limit erreicht</h2>
+				<p>Mit dem Free-Plan kannst du bis zu <strong>3 Routen</strong> speichern. Upgrade auf Pro für unbegrenzte Routen – jederzeit kündbar.</p>
+				<div class="upgrade-price-row">
+					<strong>WindRoute Pro</strong>
+					<span>5 CHF / Monat</span>
+				</div>
+				<div class="upgrade-modal-actions">
+					<button
+						class="btn-upgrade-confirm"
+						onclick={startCheckout}
+						disabled={upgradingToCheckout}
+					>
+						{upgradingToCheckout ? 'Wird vorbereitet…' : 'Pro aktivieren'}
+					</button>
+					<button class="btn-upgrade-cancel" onclick={() => (showUpgradeModal = false)}>
+						Abbrechen
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Rechte Spalte: Karte -->
 	<main class="map-area">
@@ -837,5 +884,101 @@ ${trkpts}
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+	}
+
+	/* Upgrade-Modal */
+	.upgrade-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.55);
+		backdrop-filter: blur(3px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 500;
+	}
+
+	.upgrade-card {
+		background: white;
+		border-radius: 14px;
+		padding: 1.75rem;
+		max-width: 400px;
+		width: calc(100vw - 2rem);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.upgrade-card h2 {
+		font-size: 1.1rem;
+		font-weight: 700;
+		color: #1e293b;
+	}
+
+	.upgrade-card p {
+		font-size: 0.9rem;
+		color: #475569;
+		line-height: 1.5;
+	}
+
+	.upgrade-price-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		padding: 0.75rem 1rem;
+		font-size: 0.9rem;
+		color: #1e293b;
+	}
+
+	.upgrade-price-row span {
+		font-weight: 700;
+		color: #1e40af;
+	}
+
+	.upgrade-modal-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.btn-upgrade-confirm {
+		padding: 0.75rem;
+		background: #1e40af;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-size: 0.95rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.btn-upgrade-confirm:hover:not(:disabled) {
+		background: #1d3a9e;
+	}
+
+	.btn-upgrade-confirm:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.btn-upgrade-cancel {
+		padding: 0.65rem;
+		background: transparent;
+		color: #64748b;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.btn-upgrade-cancel:hover {
+		background: #f1f5f9;
 	}
 </style>

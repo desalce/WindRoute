@@ -137,6 +137,7 @@ _[folgt]_
 | Wind-API | Open-Meteo | Kostenlos, kein API-Key, stündliche Winddaten |
 | Routing-API | GraphHopper Directions API | `round_trip` + `heading`-Parameter = Kerntechnik der App |
 | Geocoding | Photon (Komoot) | Open-Source, kein API-Key, deutschsprachige Ergebnisse |
+| Zahlungen | Stripe (Node.js SDK) | Subscription-Billing für den Pro-Plan; Webhook-basierte Plan-Verwaltung |
 
 **Architektur**
 
@@ -144,27 +145,42 @@ _[folgt]_
 graph LR
     Browser -->|GET /| SvelteKit
     Browser -->|GET /routes| SvelteKit
+    Browser -->|GET /profile| SvelteKit
     Browser -->|POST /login| AuthService
     Browser -->|POST /register| AuthService
     Browser -->|POST /logout| AuthService
     Browser -->|GET /api/wind| WindService
     Browser -->|POST /api/generate| RoutingService
     Browser -->|POST /api/routes| MongoDB
+    Browser -->|POST /api/billing/checkout| StripeService
+    Browser -->|POST /api/billing/portal| StripeService
     AuthService -->|bcryptjs| MongoDB
     WindService -->|fetch| OpenMeteo
     RoutingService -->|fetch| GraphHopper
+    StripeService -->|Stripe SDK| Stripe[(Stripe API)]
+    Stripe -->|Webhook POST /api/billing/webhook| SvelteKit
     MongoDB -->|Atlas| Cloud[(MongoDB Atlas)]
 ```
 
-**Authentifizierungs-Datenmodell**
+**Datenmodell**
 
 ```
-users       { _id, email, passwordHash, displayName?, createdAt }
-sessions    { _id (Token), userId, expiresAt }
-routes      { …, userId }   ← jede Route gehört einem User
+users    {
+           _id, email, passwordHash, displayName?, createdAt,
+           plan: 'free' | 'pro',          ← Standard: 'free'
+           stripeCustomerId?,             ← gesetzt nach erstem Checkout
+           stripeSubscriptionId?,
+           subscriptionStatus?,           ← 'active' | 'canceled' | 'past_due'
+           subscriptionCurrentPeriodEnd?  ← nächste Verlängerung / Ende bei Kündigung
+         }
+sessions { _id (Token), userId, expiresAt }
+routes   { …, userId, wind, geometry, tailwindPercent, … }
+processedWebhookEvents { stripeEventId, processedAt }  ← Idempotenz-Guard
 ```
 
 Der Session-Token ist 32 zufällige Bytes (`node:crypto.randomBytes`), base64url-kodiert, und wird als HTTP-only / SameSite=Lax Cookie gesetzt. Bei jedem Request prüft `src/hooks.server.js` den Cookie und legt das User-Objekt in `event.locals.user` ab.
+
+Die Collection `processedWebhookEvents` verhindert, dass ein Stripe-Webhook-Event bei Mehrfachlieferung doppelt verarbeitet wird (Idempotenz).
 
 **Hauptworkflow**
 
@@ -175,6 +191,9 @@ Der Session-Token ist 32 zufällige Bytes (`node:crypto.randomBytes`), base64url
 5. Für jedes Segment der Route wird Fahrrichtung vs. Windrichtung verglichen → Rückenwind-Prozent
 6. Nutzer:in kann generierte Routen per Speichern-Button sichern (erfordert Login) → erscheinen in "Meine Routen" (`/routes`) mit Mini-Map-Vorschau und Sortierung; jede Route ist mit der `userId` verknüpft
 7. Leaflet-Karte zeigt Route segmentiert: rot (Gegenwind) / grün (Rückenwind)
+8. **Plan-Enforcement:** Free-User können maximal 3 Routen speichern. Beim Versuch, eine 4. Route zu speichern, antwortet `POST /api/routes` mit HTTP 402, das Frontend zeigt ein Upgrade-Modal.
+9. **Stripe-Checkout:** Klick auf "Pro aktivieren" erstellt serverseitig eine Stripe Checkout Session (Modus `subscription`, 5 CHF/Monat) und leitet zur Stripe-Seite weiter. Nach erfolgreicher Zahlung wird der Plan sowohl per Webhook als auch direkt über die Session-ID auf der Erfolgsseite auf `pro` gesetzt.
+10. **Vorschau-Modal:** In "Meine Routen" öffnet ein Klick auf "Vorschau" ein Modal mit der interaktiven Karte, aktuellem Wind (lazy-geladen), einem Vergleich mit dem gespeicherten Wind bei Routengenerierung sowie GPX-Export und Löschen.
 
 **Projektstruktur**
 
@@ -183,44 +202,48 @@ src/
 ├── hooks.server.js          # Session-Cookie bei jedem Request prüfen → locals.user
 ├── app.d.ts                 # App.Locals-Typdefinition (user)
 ├── lib/
-│   ├── components/          # Svelte-Komponenten
-│   │   ├── NavBar.svelte    # Zeigt Login/Register oder User + Logout
-│   │   ├── MapView.svelte   # Leaflet, SSR-sicher via dynamischem Import
-│   │   ├── MiniMap.svelte   # Kleine Vorschau-Karte in der Routen-Bibliothek
-│   │   ├── WindIndicator.svelte
+│   ├── components/
+│   │   ├── NavBar.svelte          # Navigation mit Plan-Link (Profil)
+│   │   ├── MapView.svelte         # Interaktive Leaflet-Karte (Hauptseite)
+│   │   ├── MiniMap.svelte         # Statische Vorschau-Karte in der Bibliothek
+│   │   ├── RoutePreviewModal.svelte  # Modal mit Karte + aktuellem Wind + Metadaten
+│   │   ├── WindIndicator.svelte   # Wind-Anzeige (Pfeil + km/h + Himmelsrichtung)
 │   │   └── LoadingSpinner.svelte
 │   ├── models/
-│   │   └── route.js         # JSDoc-Typdefinitionen
+│   │   └── route.js               # JSDoc-Typdefinitionen (Route, WindSnapshot)
 │   └── server/
-│       ├── db/client.js     # MongoDB-Singleton (serverless-kompatibel)
+│       ├── db/client.js           # MongoDB-Singleton (serverless-kompatibel)
 │       ├── auth/
-│       │   ├── password.js  # hashPassword / verifyPassword (bcryptjs, 12 Runden)
-│       │   └── session.js   # createSession / validateSession / deleteSession + Cookie-Helpers
+│       │   ├── password.js        # hashPassword / verifyPassword (bcryptjs, 12 Runden)
+│       │   └── session.js         # createSession / validateSession / deleteSession
+│       ├── billing/
+│       │   └── stripe.js          # Stripe-Client-Singleton (analog zu db/client.js)
 │       └── services/
-│           ├── wind.js      # Open-Meteo-Integration
-│           └── routing.js   # GraphHopper + iterative Distanzkorrektur + Rückenwind-Berechnung
+│           ├── wind.js            # Open-Meteo-Integration
+│           └── routing.js         # GraphHopper + iterative Distanzkorrektur
 └── routes/
-    ├── +layout.svelte       # Globales Layout (NavBar etc.)
-    ├── +layout.server.js    # Gibt locals.user an alle Pages weiter
-    ├── +page.svelte         # Hauptseite: Formular + Karte (responsiv)
-    ├── login/
-    │   ├── +page.server.js  # Form-Action: E-Mail + Passwort prüfen, Session anlegen
-    │   └── +page.svelte     # Login-Formular
-    ├── register/
-    │   ├── +page.server.js  # Form-Action: Validierung, Hash, User + Session anlegen
-    │   └── +page.svelte     # Registrierungsformular
-    ├── logout/
-    │   └── +server.js       # POST: Session löschen, Cookie clearen, Redirect /
+    ├── +layout.svelte             # Globales Layout (NavBar)
+    ├── +layout.server.js          # Gibt locals.user an alle Pages weiter
+    ├── +page.svelte               # Hauptseite: Formular + Karte + Upgrade-Modal (402)
+    ├── login/                     # Login (Form-Action)
+    ├── register/                  # Registrierung (Form-Action)
+    ├── logout/                    # POST: Session löschen, Redirect /
+    ├── profile/
+    │   ├── +page.server.js        # Plan-Daten + Session-Sync bei ?session_id=
+    │   └── +page.svelte           # Profilseite: Plan-Anzeige, Upgrade, Abo-Verwaltung
     ├── routes/
-    │   ├── +page.server.js  # Auth-Guard + nur eigene Routen laden (userId-Filter)
-    │   └── +page.svelte     # "Meine Routen"-Bibliothek mit Mini-Maps & Sortierung
+    │   ├── +page.server.js        # Auth-Guard + eigene Routen laden
+    │   └── +page.svelte           # "Meine Routen"-Bibliothek (Mini-Maps, Vorschau-Modal)
     └── api/
-        ├── wind/            # GET ?lat=&lng=
-        ├── generate/        # POST → zwei Routen via GraphHopper
-        └── routes/
-            ├── +server.js   # GET / POST (Auth-Guard, userId-Filter)
-            └── [id]/
-                └── +server.js  # GET / DELETE (Auth-Guard + Owner-Check 403)
+        ├── wind/                  # GET ?lat=&lng= → Wind-Snapshot
+        ├── generate/              # POST → zwei Routen via GraphHopper
+        ├── routes/
+        │   ├── +server.js         # GET / POST — Plan-Check (Free max. 3), Auth-Guard
+        │   └── [id]/+server.js    # DELETE (Auth-Guard + Owner-Check)
+        └── billing/
+            ├── checkout/+server.js  # POST → Stripe Checkout Session erstellen
+            ├── portal/+server.js    # POST → Stripe Customer Portal Session
+            └── webhook/+server.js   # POST → Stripe-Events verarbeiten (signaturgeprüft)
 ```
 
 **Setup lokal**
@@ -230,11 +253,20 @@ git clone https://github.com/lorenzosalce/WindRoute.git
 cd WindRoute
 npm install
 cp .env.example .env
-# .env befüllen: MONGODB_URI und GRAPHHOPPER_API_KEY
+# .env befüllen (alle Felder, siehe .env.example)
 npm run dev
 ```
 
 Beim ersten Start die App unter `http://localhost:5173/register` öffnen, ein Konto anlegen und anschliessend Routen generieren und speichern.
+
+Für **Stripe-Webhooks** lokal ein zweites Terminal öffnen:
+
+```bash
+stripe listen --forward-to localhost:5173/api/billing/webhook
+# Das ausgegebene whsec_...-Secret als STRIPE_WEBHOOK_SECRET in .env eintragen
+```
+
+Testkarte für den Stripe Checkout: `4242 4242 4242 4242`, Datum beliebig in der Zukunft, CVC beliebig.
 
 **MongoDB-Indizes (einmalig in Mongo Shell / Compass anlegen)**
 
@@ -243,22 +275,74 @@ Beim ersten Start die App unter `http://localhost:5173/register` öffnen, ein Ko
 db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
 // E-Mail-Eindeutigkeit sicherstellen
 db.users.createIndex({ email: 1 }, { unique: true })
+// Webhook-Events eindeutig halten (Idempotenz)
+db.processedWebhookEvents.createIndex({ stripeEventId: 1 }, { unique: true })
 ```
 
 **Externe APIs & Limits**
 
-| API | Limit (Free) | Key nötig? |
+| API | Limit (Free/Test) | Key nötig? |
 |---|---|---|
 | Open-Meteo | 10 000 Req/Tag | Nein |
 | GraphHopper | 500 Req/Tag | Ja (graphhopper.com) |
 | Photon (Komoot) | Keine offizielle Limite | Nein |
 | MongoDB Atlas M0 | 512 MB Speicher | Nein (Connection String) |
+| Stripe | Unbegrenzt im Test-Modus | Ja (stripe.com) |
 
 ### 3.5 Validate
 _[folgt in Woche 14]_
 
 ## 4. Erweiterungen [Optional]
-_[folgt]_
+
+### 4.1 Routen-Vorschau-Modal
+
+**Problem:** In der Routen-Bibliothek ("Meine Routen") waren gespeicherte Routen nur als Mini-Karte mit Basisdaten sichtbar. Um eine Route zu beurteilen, fehlte die Möglichkeit, sie gross zu betrachten und den aktuellen Wind am Startpunkt direkt zu vergleichen.
+
+**Lösung:** Ein modaler Dialog (`RoutePreviewModal.svelte`) öffnet sich beim Klick auf "Vorschau" und zeigt:
+
+- **Interaktive Leaflet-Karte** mit der gespeicherten Farbcodierung (rot = Gegenwind, grün = Rückenwind — basierend auf dem Wind zum Zeitpunkt der Generierung)
+- **Aktueller Wind** am Startpunkt der Route (lazy-geladen beim Modal-Öffnen via `/api/wind`, gleiche `WindIndicator`-Komponente wie auf der Hauptseite)
+- **Windvergleich:** Weicht die aktuelle Windrichtung um mehr als 45° vom gespeicherten Wert ab, erscheint ein Hinweistext: *"Wind hat sich seit der Speicherung geändert — diese Route ist heute eventuell nicht mehr ideal."*
+- **Metadaten:** Datum, Distanz, Dauer, Höhenmeter, Startpunkt, Rückenwind-Prozent
+- **Aktionen:** GPX-Export und Löschen direkt aus dem Modal heraus
+
+**Technische Umsetzung:**
+
+Das Modal verwendet das native `<dialog>`-Element mit `showModal()` für korrekte Fokus-Verwaltung und die `Esc`-Taste zum Schliessen. Die Leaflet-Karte wird absichtlich erst nach `showModal()` asynchron initialisiert, da das `<dialog>`-Element ohne `open`-Attribut `display: none` hat und Leaflet beim Aufruf korrekte DOM-Dimensionen benötigt. Die Wind-Abfrage erfolgt ausschliesslich beim Öffnen des Modals (Lazy Loading), nicht beim Seitenladen der Bibliothek.
+
+### 4.2 Pro-Subscription via Stripe
+
+**Problem:** Als Studienprojekt soll WindRoute ein realistisches Monetarisierungsmodell demonstrieren. Free-User sollen auf 3 gespeicherte Routen begrenzt werden; unbegrenzte Nutzung ist kostenpflichtig.
+
+**Lösung:** Zweistufiges Freemium-Modell mit Stripe Subscriptions:
+
+| Plan | Preis | Routen | Features |
+|---|---|---|---|
+| **Free** | 0 CHF | max. 3 | Routen generieren, speichern, exportieren |
+| **Pro** | 5 CHF/Monat | unbegrenzt | + alle zukünftigen Premium-Features |
+
+**Ablauf:**
+
+1. Free-User versucht, eine 4. Route zu speichern → `POST /api/routes` gibt HTTP 402 zurück
+2. Das Frontend fängt die 402 ab und zeigt ein Upgrade-Modal (zentriert über der Karte)
+3. Klick auf "Pro aktivieren" → Frontend ruft `POST /api/billing/checkout` auf
+4. Server erstellt eine Stripe Checkout Session (Modus `subscription`) und gibt die URL zurück — der Stripe Secret Key verlässt nie den Server
+5. Nutzer:in zahlt auf der Stripe-Seite mit Kreditkarte
+6. Stripe leitet zur Erfolgs-URL weiter (`/profile?upgraded=1&session_id=...`)
+7. Die Profilseite liest die `session_id` aus der URL, ruft die Session direkt bei Stripe ab und setzt den Plan auf `pro` — dieser Schritt funktioniert unabhängig vom Webhook
+8. Parallel dazu sendet Stripe ein `checkout.session.completed`-Webhook-Event, das `POST /api/billing/webhook` ebenfalls verarbeitet (Idempotenz-Guard verhindert doppelte Verarbeitung)
+
+**Weitere Webhook-Events:**
+- `customer.subscription.updated` → Statusänderungen (Kündigung, Verlängerung, Zahlungsverzug) werden in der DB nachgeführt
+- `customer.subscription.deleted` → Plan wird auf `free` zurückgesetzt
+
+**Abo-Verwaltung:** Pro-User gelangen via "Abo verwalten" auf der Profilseite zum Stripe Customer Portal, wo sie Zahlungsmethode ändern oder kündigen können. Bei Kündigung bleibt der Pro-Status bis Ende der bezahlten Periode aktiv.
+
+**Sicherheit:**
+- Stripe Secret Key ausschliesslich serverseitig (`$env/static/private`)
+- Webhook-Signaturen werden mit `stripe.webhooks.constructEvent()` verifiziert
+- `userId` wird nie aus dem Request-Body gelesen — ausschliesslich aus `event.locals.user` (Session)
+- Webhook-Idempotenz via `processedWebhookEvents`-Collection in MongoDB
 
 ## 5. Projektorganisation [Optional]
 _[folgt]_
