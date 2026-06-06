@@ -107,18 +107,75 @@ Eine Web-App (**WindRoute**), die dem/der Sportler:in zu Beginn eines Trainingst
 **Kern-Insight für die Umsetzung:** Die Kombination `Open-Meteo (Windrichtung)` + `GraphHopper round_trip (heading = Windrichtung)` erlaubt die Kernfunktion mit minimalem Aufwand. Das ist die technische Grundhypothese, die im Prototyp validiert wird.
 
 ### 3.2 Sketch
-- **Variantenüberblick:** _[folgt in Woche 9]_
-- **Skizzen:** _[folgt in Woche 9]_
+
+Als zentrales Feature für die Crazy-8s-Übung wurde das **Hauptinterface der Routengenerierung** gewählt — das Element, das Eingabeformular (Startpunkt, Distanz, Sportart) und Kartenanzeige verbindet und damit den Kern der App ausmacht.
+
+**Crazy 8s**  
+In 8 Minuten entstanden 8 Varianten desselben Features: Vollbildkarte mit schwebendem Eingabe-Panel, Zwei-Spalten-Layout (Formular links, Karte rechts), Schritt-für-Schritt-Wizard, seitliche Sidebar, schmale untere Leiste mit kompaktem Formular, Karte mit übergelagertem Suchfeld (à la Google Maps), Popup-Dialog zur Routeneingabe sowie eine vertikale Kachel-Ansicht. Ziel war Quantität, nicht Ausarbeitung.
+
+**Peer Dot-Voting & Feedback**  
+In der anschliessenden Kleingruppen-Runde verteilten die anderen Teilnehmenden je 3 Punkte auf die Ideen. Die meisten Punkte erhielten das Zwei-Spalten-Layout und die Sidebar-Variante. Qualitatives Feedback:
+- *"Das Zwei-Spalten-Layout macht sofort klar, was die App tut — links eingeben, rechts sehen."*
+- *"Der Wizard wirkt unnötig komplex für eine tägliche Nutzung."*
+- *"Die Vollbildkarte ist ansprechend, aber das Panel verdeckt immer genau den Bereich, den man sehen will."*
+
+**Reflexion Entscheidungsprozess**  
+Gewählt wurde das **Zwei-Spalten-Layout**. Das Peer-Feedback hat diese Wahl bestätigt und geschärft — insbesondere der Hinweis auf die tägliche Nutzung hat verdeutlicht, dass ein Wizard für erfahrene Nutzer:innen bremsend wirkt. Die Vollbildkarte wurde trotz ästhetischem Vorteil verworfen, weil das schwebende Panel auf kleinen Bildschirmen kritische Kartenbereiche verdeckt.
+
+Die vollständigen Artefakte (Foto der Crazy-8s inkl. Dots und Kommentare, Peer-Feedback-Notizen, ausgearbeitete Skizze) sind in den beigefügten JPGs dokumentiert: Skizze_Prototyping_Lorenzo_Salce_Seite_1 und Skizze_Prototyping_Lorenzo_Salce_Seite_2 (./docs)
 
 ### 3.3 Decide
-- **Gewählte Variante & Begründung:** _[folgt]_
-- **End-to-End-Ablauf:** _[folgt]_
-- **Mockup:** _[folgt in Woche 10]_
+
+#### Gewählte Variante & Begründung
+
+Umgesetzt wurde **Variante B** (Zwei-Spalten-Layout). Die Entscheidung basierte auf drei Kriterien:
+
+- **Nutzerzentrierung:** Formular und Karte sind gleichzeitig sichtbar — der/die Nutzer:in sieht die Route sofort nach der Generierung, ohne zwischen Schritten zu navigieren oder ein Panel zu verschieben. Damit entspricht das Layout dem mentalen Modell: "Ich gebe meinen Startpunkt ein und sehe direkt, wohin die Route führt."
+- **Umsetzbarkeit:** Ein Zwei-Spalten-Grid ist in SvelteKit/CSS ohne komplexe State-Verwaltung realisierbar. Overlay-Panels (Variante A) erfordern dagegen Positionierungslogik und z-index-Verwaltung, die bei verschiedenen Viewport-Grössen fehleranfällig ist.
+- **Technische Machbarkeit:** Leaflet benötigt ein DOM-Element mit definierten Dimensionen zur Initialisierung. Eine feste rechte Spalte erfüllt diese Bedingung zuverlässig, ein `display: none`-Panel hingegen nicht — was bei Variante A zu Initialisierungsfehlern geführt hätte.
+
+Variante C wurde verworfen, weil der "Gegenwind-zuerst"-Ansatz nach einmaliger Erklärung intuitiv ist und kein mehrschrittiges Onboarding rechtfertigt. Die Zielgruppe (regelmässig trainierende Radsportler:innen) führt diesen Ablauf täglich durch — ein Wizard würde sie ausbremsen.
+
+Referenz-Mockup: [Figma-Prototyp](https://www.figma.com/proto/pPo0i8wmxxtPgsF0BRzoaB/WindRoute?node-id=1-4&p=f&t=ldi0zPSmsmIe2h9w-0&scaling=contain&content-scaling=responsive&pageid=0%3A1&starting-point-node-id=1%3A4)
+
+#### End-to-End-Ablauf
+
+Der vollständige Ablauf — vom Login bis zum GPX-Export — läuft wie folgt ab:
+
+1. Nutzer:in registriert sich oder meldet sich an; ein HTTP-only Session-Cookie (30 Tage gültig) wird gesetzt.
+2. Auf der Hauptseite gibt die Nutzer:in Startpunkt, gewünschte Distanz und Sportart ein. Der Startpunkt wird per Photon-Geocoding in `lat/lng` aufgelöst.
+3. Klick auf "Routen generieren": `/api/wind` ruft die aktuelle Windrichtung und -stärke von Open-Meteo ab.
+4. `/api/generate` übergibt Windrichtung als `heading`-Parameter an die GraphHopper `round_trip`-API. Ein iterativer Algorithmus (max. 3 Versuche) korrigiert die Ausgabe-Distanz auf ±5 km Genauigkeit.
+5. Für jedes Routensegment wird die Fahrrichtung mit der Windrichtung verglichen; das Ergebnis ist der Rückenwind-Prozentsatz. Die Karte zeigt die Segmente farbcodiert (rot = Gegenwind, grün = Rückenwind).
+6. Die Nutzer:in wählt eine der beiden angezeigten Routen und speichert sie. Die Route wird mit der `userId` in MongoDB gespeichert und erscheint in "Meine Routen" mit Mini-Map-Vorschau.
+7. Free-User können maximal 3 Routen speichern; beim vierten Speicherversuch antwortet die API mit HTTP 402 und das Frontend zeigt ein Upgrade-Modal.
+8. Optional: Klick auf "Vorschau" in der Routen-Bibliothek öffnet ein Modal mit interaktiver Karte, aktuellem Wind (lazy-geladen) und einem Vergleich mit dem Wind zum Zeitpunkt der Generierung.
+9. GPX-Export ist direkt aus dem Vorschau-Modal heraus möglich.
 
 ### 3.4 Prototype
 
 #### 3.4.1. Entwurf (Design)
-_[folgt]_
+
+Der Figma-Prototyp zeigt den vollständigen Happy Path der App: von der Registrierung über die Routengenerierung bis zur Routen-Bibliothek und dem Vorschau-Modal. Das Hauptinterface setzt die in 3.3 gewählte Variante (Zwei-Spalten-Layout) um — links Eingabeformular und Routenliste, rechts die interaktive Karte mit Farbcodierung. Die Navigation beschränkt sich auf drei Bereiche: Hauptseite (Generierung), Meine Routen (Bibliothek) und Profil (Plan & Abo-Verwaltung).
+
+[Figma-Prototyp (WindRoute)](https://www.figma.com/proto/pPo0i8wmxxtPgsF0BRzoaB/WindRoute?node-id=1-4&p=f&t=ldi0zPSmsmIe2h9w-0&scaling=contain&content-scaling=responsive&pageid=0%3A1&starting-point-node-id=1%3A4)
+
+**Screenshots der fertigen App**
+
+![Hauptseite mit generierter Route](./docs/screenshot-hauptseite.png)
+*Hauptseite: Zwei-Spalten-Layout mit Eingabeformular (links) und farbcodierter Route auf der Karte (rot = Gegenwind, grün = Rückenwind).*
+
+![Upgrade-Modal](./docs/screenshot-upgrade-modal.png)
+*Upgrade-Modal: erscheint beim vierten Speicherversuch eines Free-Users (HTTP 402).*
+
+![Meine Routen](./docs/screenshot-meine-routen.png)
+*Routen-Bibliothek: gespeicherte Routen mit Mini-Map-Vorschau, Distanz, Rückenwind-Prozent und Aktionsbuttons.*
+
+![Vorschau-Modal](./docs/screenshot-vorschau-modal.png)
+*Vorschau-Modal: interaktive Karte, aktueller Wind am Startpunkt (lazy-geladen), Windvergleich mit Zeitpunkt der Generierung sowie GPX-Export.*
+
+![Profilseite](./docs/screenshot-profil.png)
+*Profilseite: Plan-Anzeige (Free/Pro), Upgrade-Button und Abo-Verwaltung via Stripe Customer Portal.*
 
 #### 3.4.2. Umsetzung (Technik)
 
@@ -290,7 +347,95 @@ db.processedWebhookEvents.createIndex({ stripeEventId: 1 }, { unique: true })
 | Stripe | Unbegrenzt im Test-Modus | Ja (stripe.com) |
 
 ### 3.5 Validate
-_[folgt in Woche 14]_
+
+#### Usability Evaluation
+
+**URL der getesteten Version:**  
+https://windroute.netlify.app *(Stand: 20.05.2026)*
+
+---
+
+**Ziele der Evaluation**
+
+- Können Nutzer:innen intuitiv eine Route generieren, ohne die App zu kennen?
+- Ist die "Gegenwind-zuerst"-Logik und die rot/grün-Farbcodierung auf der Karte verständlich?
+- Können Nutzer:innen eine Route speichern (inkl. Registrierung)?
+- Finden Nutzer:innen die gespeicherten Routen und die Vorschau-Funktion?
+- Ist der GPX-Export auffindbar und verständlich?
+- Ist der Upgrade-Flow (Free-Limit → Stripe-Checkout → Pro) verständlich und ohne Hürden durchführbar?
+- Finden Nutzer:innen die Abo-Verwaltung (Stripe Customer Portal)?
+
+---
+
+**Vorgehen**
+
+- Moderiert, on-site (Think-Aloud-Methode)
+- Testleiter:in: Lorenzo Salce
+- Testleiter:in interagiert minimal, stellt Fragen bei Unklarheiten
+- Stripe-Aufgaben wurden im Testmodus durchgeführt (Testkarte `4242 4242 4242 4242`)
+- Protokollierung mit Feedback Grid (eine Seite pro Testperson)
+
+---
+
+**Stichprobe**
+
+| # | Name | Profil | Datum |
+|---|------|--------|-------|
+| TP-01 | Levin Kuhn | Mitstudierende:r | 20.05.2026 |
+| TP-02 | Pascal Schuler | Mitstudierende:r | 20.05.2026 |
+
+---
+
+**Aufgaben / Szenarien**
+
+1. **Route generieren:** Sie sind Rennradfahrerin und wollen eine Trainingsrunde von ca. 60 km ab Winterthur drehen. Lassen Sie sich auf WindRoute eine passende Route vorschlagen.
+2. **Routen vergleichen:** Die App zeigt zwei Routenvorschläge. Vergleichen Sie diese und entscheiden Sie, welche Sie bevorzugen würden.
+3. **Route speichern:** Speichern Sie die bevorzugte Route für später. (Falls nötig: Erstellen Sie zuerst ein Konto.)
+4. **Gespeicherte Routen abrufen:** Rufen Sie Ihre gespeicherten Routen auf und öffnen Sie die Detailansicht einer Route.
+5. **GPX-Export:** Exportieren Sie eine Route für den Radcomputer.
+6. **Upgrade auf Pro:** Sie haben das Speicher-Limit des kostenlosen Kontos erreicht und möchten weiterhin Routen speichern. Führen Sie den Upgrade-Prozess durch (Testmodus).
+7. **Abo verwalten:** Prüfen Sie, welche Zahlungsinformationen hinterlegt sind und wann das Abo erneuert wird.
+
+---
+
+**Kennzahlen & Beobachtungen**
+
+| Aufgabe | TP-01 (Levin) | TP-02 (Pascal) | Beobachtungen |
+|---------|--------------|----------------|---------------|
+| 1. Route generieren | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+| 2. Routen vergleichen | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+| 3. Route speichern | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+| 4. Gespeicherte Routen | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+| 5. GPX-Export | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+| 6. Upgrade auf Pro | ✅ Ja | ✅ Ja | Upgrade-Flow für beide verständlich |
+| 7. Abo verwalten | ✅ Ja | ✅ Ja | Beide ohne Probleme |
+
+**Issues (nach Schweregrad 0–4)**
+
+| # | Beschreibung | Aufgabe | Schweregrad | Häufigkeit |
+|---|-------------|---------|-------------|------------|
+| 1 | rot/grün-Farbcodierung fällt auf der Karte zu wenig auf; keine Legende vorhanden | 2 | 3 | 2/2 |
+| 2 | Aktueller Standort wird nicht automatisch als Startpunkt vorgeschlagen | 1 | 2 | 1/2 |
+| 3 | Keine Möglichkeit, Zwischenziele zu setzen oder eine generierte Route nachträglich anzupassen | 1, 2 | 2 | 1/2 |
+| 4 | Höhenmeter-Profil und Windrichtung sind nicht kombiniert dargestellt | 2 | 1 | 1/2 |
+
+---
+
+**Zusammenfassung der Resultate**
+
+Beide Testpersonen konnten alle sieben Aufgaben — von der Routengenerierung über das Speichern bis zum Stripe-Upgrade — selbstständig und ohne Hilfe abschliessen. Die App wurde als intuitiv und übersichtlich bewertet, und beide würden sie vor einer Trainingsrunde verwenden oder weiterempfehlen. Das grösste wiederkehrende Problem ist die Lesbarkeit der rot/grün-Farbcodierung auf der Karte: beide Testpersonen fanden die Farben zu unauffällig und vermissten eine Erklärung. Darüber hinaus wurden fehlende Komfortfunktionen genannt — insbesondere die automatische Standorterkennung und die Möglichkeit, Routen nach der Generierung anzupassen oder Zwischenziele hinzuzufügen.
+
+---
+
+**Abgeleitete Verbesserungen**
+
+| Priorität | Verbesserung | Begründung | Issue-Ref. |
+|-----------|-------------|------------|-----------|
+| Hoch | Farbcodierung der Kartensegmente kontrastreicher gestalten und eine Legende (rot = Gegenwind, grün = Rückenwind) einblenden | Beide TP fanden die Farben schwer erkennbar und unklar | #1 |
+| Mittel | Automatische Standorterkennung als Option beim Startpunkt-Feld anbieten | TP-01 vermisste diese Funktion explizit | #2 |
+| Mittel | Möglichkeit einbauen, generierte Routen mit Zwischenzielen zu versehen oder manuell anzupassen | TP-02 nannte fehlende Anpassbarkeit als Einschränkung | #3 |
+| Tief | Höhenprofil und Windrichtung in einer kombinierten Ansicht darstellen | TP-01 regte diese Kombination als nützliche Erweiterung an | #4 |
+
 
 ## 4. Erweiterungen [Optional]
 
@@ -345,7 +490,34 @@ Das Modal verwendet das native `<dialog>`-Element mit `showModal()` für korrekt
 - Webhook-Idempotenz via `processedWebhookEvents`-Collection in MongoDB
 
 ## 5. Projektorganisation [Optional]
-_[folgt]_
+
+**Repository-Struktur**
+
+| Pfad | Inhalt |
+|---|---|
+| `src/` | Gesamter Anwendungscode (SvelteKit-Seiten, API-Routen, Komponenten, Services) |
+| `README.md` | Projektdokumentation (dieses Dokument) |
+| `docs/` | Artefakte: Crazy-8s-Skizzen (`skizzen.pdf`), Entwurf → [Figma-Prototyp](https://www.figma.com/proto/pPo0i8wmxxtPgsF0BRzoaB/WindRoute?node-id=1-4&p=f&t=ldi0zPSmsmIe2h9w-0&scaling=contain&content-scaling=responsive&pageid=0%3A1&starting-point-node-id=1%3A4) |
+| `.env.example` | Vorlage für alle benötigten Umgebungsvariablen (ohne Secrets) |
+| `.gitignore` | Schliesst `.env` und `node_modules/` vom Repository aus |
+
+**Commit-Konvention**
+
+Commits folgen dem [Conventional Commits](https://www.conventionalcommits.org/)-Standard:
+
+- `feat:` — neue Funktionen (z.B. `feat: add route preview modal and Stripe Pro subscription`)
+- `fix:` — Fehlerbehebungen (z.B. `fix: resolve Svelte build warnings for Netlify deployment`)
+- `docs:` — Dokumentationsänderungen (z.B. `docs: complete KI-Deklaration`)
+- `chore:` — Konfiguration & Setup (z.B. `chore: configure Netlify deployment`)
+
+**GitHub Issues**
+
+Die vier Usability-Issues aus der Evaluation (Abschnitt 3.5) wurden als GitHub Issues angelegt:
+
+- [#1 – Farbcodierung der Kartensegmente: zu wenig Kontrast, keine Legende](https://github.com/desalce/WindRoute/issues/1)
+- [#2 – Kein automatischer Standortvorschlag beim Startpunkt](https://github.com/desalce/WindRoute/issues/2)
+- [#3 – Keine Zwischenziele oder manuelle Routenanpassung möglich](https://github.com/desalce/WindRoute/issues/3)
+- [#4 – Höhenprofil und Windrichtung nicht kombiniert dargestellt](https://github.com/desalce/WindRoute/issues/4)
 
 ## 6. KI-Deklaration
 
